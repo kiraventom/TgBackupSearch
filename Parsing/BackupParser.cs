@@ -4,14 +4,14 @@ using TgBackupSearch.Model;
 
 namespace TgBackupSearch.Parsing;
 
-public class BackupParser(ILogger logger, Config config)
+public class BackupParser(ILogger logger, Paths paths)
 {
     public async Task FillDb(MainContext context)
     {
-        var channelDir = config.ChannelDir;
+        var channelDir = paths.ChannelDir;
 
         if (string.IsNullOrEmpty(channelDir) || !Directory.Exists(channelDir))
-            throw new NotSupportedException($"{nameof(Config)}.{nameof(Config.ChannelDir)} = '{config.ChannelDir}' is invalid path");
+            throw new NotSupportedException($"{nameof(Paths)}.{nameof(Paths.ChannelDir)} = '{paths.ChannelDir}' is invalid path");
 
         // Parse comments
         var commentParser = new CommentParser(logger);

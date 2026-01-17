@@ -5,19 +5,22 @@ using Serilog;
 namespace TgBackupSearch;
 
 [method: JsonConstructor]
-public class Config(string databasePath, string channelDir, string discussionGroupDir = null)
+public class Config()
 {
-    public string DatabasePath { get; } = databasePath;
-
-    public string ChannelDir { get; } = channelDir;
-    public string DiscussionGroupDir { get; } = discussionGroupDir;
+    private static Config Default { get; } = new Config();
 
     public static bool TryLoad(string path, out Config config)
     {
         config = null;
 
         if (!File.Exists(path))
+        {
+            var json = JsonSerializer.Serialize(Default, new JsonSerializerOptions() { WriteIndented = true } );
+            File.WriteAllText(path, json);
+
+            Log.Warning("Config file not found. Created default config file at {path}", path);
             return false;
+        }
 
         try
         {
