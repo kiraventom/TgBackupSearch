@@ -17,8 +17,9 @@ public abstract class Item
     [NotMapped]
     public bool IsTextOnly => Media.Count == 0;
 
+    public string DirPath { get; set; }
     public int TelegramId { get; set; }
+
     public DateTimeOffset DT { get; set; }
     public string Text { get; set; }
-    public string DirPath { get; set; }
 }

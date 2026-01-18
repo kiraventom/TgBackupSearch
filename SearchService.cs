@@ -13,11 +13,11 @@ public class SearchService(ILogger logger, IServiceScopeFactory spf) : Backgroun
         using var scope = spf.CreateScope();
         var backupParser = scope.ServiceProvider.GetRequiredService<BackupParser>();
         var recognizer = scope.ServiceProvider.GetRequiredService<Recognizer>();
-
+        //
         // Fill database
         // TODO: Do not parse each time
         logger.Information("Starting to fill database");
-        await backupParser.FillDb();
+        await backupParser.ParseMetadata();
         logger.Information("Database filled");
 
         // Recognition

@@ -8,6 +8,7 @@ public class MainContext : DbContext
     public DbSet<Post> Posts { get; set; }
     public DbSet<Media> Media { get; set; }
     public DbSet<Comment> Comments { get; set; }
+    public DbSet<MetadataCache> Cache { get; set; }
 
     public MainContext(ILogger logger, DbContextOptions<MainContext> options) : base(options)
     {
@@ -24,10 +25,12 @@ public class MainContext : DbContext
             .Property(m => m.Type)
             .HasConversion<int>();
 
-        modelBuilder.Entity<Media>()
-            .HasOne(m => m.Recognition)
-            .WithOne(r => r.Media)
-            .HasForeignKey<Recognition>(r => r.MediaId)
-            .IsRequired(false);
+        modelBuilder.Entity<MetadataCache>()
+            .HasIndex(c => c.Path)
+            .IsUnique();
+
+        modelBuilder.Entity<Item>()
+            .HasIndex(i => i.DirPath)
+            .IsUnique();
     }
 }
