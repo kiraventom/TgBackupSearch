@@ -1,4 +1,5 @@
 ﻿using System.CommandLine;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -6,34 +7,10 @@ using Serilog;
 using Serilog.Events;
 using TgBackupSearch.Model;
 using TgBackupSearch.Parsing;
+using TgBackupSearch.Recognition;
+using TgBackupSearch.Video;
 
 namespace TgBackupSearch;
-
-public class SearchService(ILogger logger, IServiceScopeFactory spf) : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Fill database
-        // TODO: Do not parse each time
-        using (var scope = spf.CreateScope())
-        {
-            var context = scope.ServiceProvider.GetRequiredService<MainContext>();
-            var backupParser = scope.ServiceProvider.GetRequiredService<BackupParser>();
-            await backupParser.FillDb(context);
-        }
-
-        // Recognition
-        // TODO:
-        // Run OCR on files, write result to Media.Recognition
-        // If picture: run OCR
-        // If video: pick frames with ffmpeg, run OCR
-
-        // Search
-        // TODO
-    }
-}
-
-public record Paths(string AppDataDir, string AppConfigDir, string ChannelDir, string DiscussionGroupDir = null);
 
 internal class Program
 {
@@ -52,20 +29,32 @@ internal class Program
             return;
         }
 
-        var paths = new Paths(appDataDir, appConfigDir, channelDir, discussionDir);
+        var configFile = Path.Combine(appConfigDir, "config.json");
+        if (!Config.TryLoad(configFile, out var config))
+        {
+            logger.Fatal("Failed to load config, closing");
+            return;
+        }
 
-        // var configFile = Path.Combine(appConfigDir, "config.json");
-        // if (!Config.TryLoad(configFile, out var config))
-        // {
-        //     logger.Fatal("Failed to load config, closing");
-        //     return;
-        // }
+        if (!CheckFfmpeg())
+        {
+            logger.Fatal("Failed to locate ffmpeg, closing");
+            return;
+        }
+
+        if (!TryGetTesseractDir(config, out var tesseractDir))
+        {
+            logger.Fatal("Failed to locate tesseract dir, closing");
+            return;
+        }
+
+        var paths = new Paths(appDataDir, appConfigDir, tesseractDir, channelDir, discussionDir);
 
         var builder = Host.CreateApplicationBuilder();
 
         builder.Services
             .AddSerilog(logger)
-            // .AddSingleton(config)
+            .AddSingleton(config)
             .AddSingleton(paths)
             .AddDbContext<MainContext>(static (sp, options) =>
             {
@@ -74,6 +63,8 @@ internal class Program
                 options.UseSqlite($"Data Source={dbPath};");
             })
             .AddTransient<BackupParser>()
+            .AddTransient<Recognizer>()
+            .AddTransient<FrameExtractor>()
             .AddHostedService<SearchService>();
 
         var host = builder.Build();
@@ -90,6 +81,135 @@ internal class Program
         {
             Log.CloseAndFlush();
         }
+    }
+
+    private static bool CheckFfmpeg()
+    {
+        using var ffmpegProc = Process.Start("ffmpeg", "-hide_banner -version");
+        ffmpegProc.WaitForExit();
+
+        if (ffmpegProc.ExitCode != 0)
+        {
+            if (OperatingSystem.IsLinux())
+            {
+                Log.Logger.Error("ffmpeg not found. You can install it with package manager (e.g., sudo apt install ffmpeg)");
+            }
+            else
+            {
+                Log.Logger.Error("ffmpeg not found");
+            }
+
+            return false;
+        }
+
+        using var ffprobeProc = Process.Start("ffprobe", "-hide_banner -version");
+        ffprobeProc.WaitForExit();
+
+        if (ffprobeProc.ExitCode != 0)
+        {
+            Log.Logger.Error("ffprobe not found");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool CheckTesseract()
+    {
+        using var process = Process.Start("tesseract", "--version"); process.WaitForExit();
+
+        var result = process.ExitCode == 0;
+        if (!result)
+        {
+            if (OperatingSystem.IsLinux())
+            {
+                Log.Logger.Error("Tesseract not found. You can install it with package manager (e.g., sudo apt install tesseract-ocr)");
+            }
+            else
+            {
+                Log.Logger.Error("Tesseract not found");
+            }
+        }
+
+        return result;
+    }
+
+    private static bool TryGetTesseractDir(Config config, out string tessdataDir)
+    {
+        tessdataDir = null;
+
+        if (!CheckTesseract())
+            return false;
+
+        if (!CheckTesseractLangs(config))
+            return false;
+
+        if (CheckDir(Environment.GetEnvironmentVariable("$TESSDATA_PREFIX"), ref tessdataDir))
+            return true;
+
+        if (CheckDir(config.TesseractDir, ref tessdataDir))
+            return true;
+
+        if (CheckDir(Path.Combine(AppContext.BaseDirectory, "tessdata"), ref tessdataDir))
+            return true;
+
+        return false;
+
+        static bool CheckDir(string path, ref string dir)
+        {
+            var result = !string.IsNullOrEmpty(path) && Directory.Exists(path);
+            if (result)
+            {
+                var folderName = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+                if (folderName == "tessdata")
+                    path = Path.GetDirectoryName(path);
+
+                dir = path;
+            }
+
+            return result;
+        }
+    }
+
+    private static bool CheckTesseractLangs(Config config)
+    {
+        if (config.Languages.Count == 0)
+            return true;
+
+        var psi = new ProcessStartInfo()
+        {
+            FileName = "tesseract",
+            Arguments = "--list-langs",
+            RedirectStandardOutput = true,
+        };
+
+        using var process = Process.Start(psi);
+        process.WaitForExit();
+
+        var output = process.StandardOutput.ReadToEnd();
+        var lines = output.Split(Environment.NewLine, StringSplitOptions.TrimEntries);
+
+        bool result = true;
+
+        foreach (var lang in config.Languages)
+        {
+            if (!lines.Contains(lang))
+            {
+                result = false;
+
+                if (OperatingSystem.IsLinux())
+                {
+                    Log.Logger.Error("Tesseract language \"{lang}\" not found. You can install it with package manager (e.g., sudo apt install tesseract-ocr-{lang})", lang);
+                }
+                else
+                {
+                    Log.Logger.Error("Tesseract language \"{lang}\" not found", lang);
+                }
+            }
+        }
+
+        return result;
     }
 
     private static bool TryGetRunOptions(string[] args, out string channelDir, out string discussionDir)
@@ -116,7 +236,7 @@ internal class Program
 
         var parseResult = rootCommand.Parse(args);
         foreach (var error in parseResult.Errors)
-            Log.Fatal(error.Message);
+            Log.Error(error.Message);
 
         if (parseResult.Errors.Any())
             return false;

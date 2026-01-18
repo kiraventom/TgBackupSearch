@@ -5,9 +5,13 @@ using Serilog;
 namespace TgBackupSearch;
 
 [method: JsonConstructor]
-public class Config()
+public class Config(IReadOnlyCollection<string> languages, string tesseractDir = null)
 {
-    private static Config Default { get; } = new Config();
+    private static Config Default { get; } = new Config([ "eng", "rus" ]);
+
+    public IReadOnlyCollection<string> Languages { get; } = languages;
+
+    public string TesseractDir { get; } = tesseractDir;
 
     public static bool TryLoad(string path, out Config config)
     {
@@ -19,7 +23,6 @@ public class Config()
             File.WriteAllText(path, json);
 
             Log.Warning("Config file not found. Created default config file at {path}", path);
-            return false;
         }
 
         try
@@ -29,7 +32,7 @@ public class Config()
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex.ToString());
+            Log.Error(ex.ToString());
             return false;
         }
 

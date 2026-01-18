@@ -4,9 +4,9 @@ using TgBackupSearch.Model;
 
 namespace TgBackupSearch.Parsing;
 
-public class BackupParser(ILogger logger, Paths paths)
+public class BackupParser(ILogger logger, Paths paths, MainContext context)
 {
-    public async Task FillDb(MainContext context)
+    public async Task FillDb()
     {
         var channelDir = paths.ChannelDir;
 
