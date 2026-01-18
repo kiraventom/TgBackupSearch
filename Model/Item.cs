@@ -22,4 +22,6 @@ public abstract class Item
 
     public DateTimeOffset DT { get; set; }
     public string Text { get; set; }
+
+    public abstract string BuildLink(ChannelInfo info);
 }

@@ -5,41 +5,52 @@ using TgBackupSearch.Model;
 
 namespace TgBackupSearch.Parsing;
 
-public class BackupParser(ILogger logger, Paths paths, MainContext context)
+public class BackupParser(ILogger logger, RunOptions runOptions, Paths paths, ChannelContext context)
 {
     private const string METADATA_PATTERN = "metadata*.json";
+    private const int DAYS_CHUNK_SIZE = 250;
 
-    public async Task ParseMetadata()
+    private int _totalCacheWrites = 0;
+    private int _daysParsed = 0;
+
+    public async Task ParseMetadata(CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(paths.ChannelDir) || !Directory.Exists(paths.ChannelDir))
-            throw new NotSupportedException($"{nameof(Paths)}.{nameof(Paths.ChannelDir)} = '{paths.ChannelDir}' is invalid path");
+        logger.Information("Starting to parse metadata...");
 
-        await ParseInternal();
-    }
-
-    private async Task ParseInternal()
-    {
         IReadOnlyCollection<CommentChain> comments = [];
         if (paths.DiscussionGroupDir is not null)
         {
             // Parse comments
             var commentParser = new CommentParser(logger);
-            await ParseDirectory<Comment>(paths.DiscussionGroupDir, commentParser);
+            await ParseDirectory<Comment>(paths.DiscussionGroupDir, commentParser, ct);
 
             comments = commentParser.BuildComments();
         }
 
         // Parse posts
-        var postParser = new PostParser(logger, comments);
-        await ParseDirectory<Post>(paths.ChannelDir, postParser);
+        var postParser = new PostParser(logger, runOptions, comments);
+        await ParseDirectory<Post>(paths.ChannelDir, postParser, ct);
 
         await context.SaveChangesAsync();
+
+        logger.Information("Successfully parsed metadata, days parsed: {days}, total cache writes: {writes}", _daysParsed, _totalCacheWrites);
     }
 
-    private async Task ParseDirectory<T>(string dir, IItemParser itemParser) where T : Item, new()
+    private void IncreaseDaysCount()
+    {
+        ++_daysParsed;
+        if (_daysParsed % DAYS_CHUNK_SIZE == 0)
+            logger.Information("Parsed {count} days, still going...", _daysParsed);
+    }
+
+    private async Task ParseDirectory<T>(string dir, IItemParser itemParser, CancellationToken ct) where T : Item, new()
     {
         foreach (var dayDir in Directory.EnumerateDirectories(dir))
         {
+            ct.ThrowIfCancellationRequested();
+
+            logger.Debug("Starting to parse day {name}", Path.GetFileName(dayDir));
+
             var itemDirs = Directory.EnumerateDirectories(dayDir)
                 .ToHashSet();
 
@@ -47,8 +58,12 @@ public class BackupParser(ILogger logger, Paths paths, MainContext context)
                 .Where(i => itemDirs.Contains(i.DirPath))
                 .ToDictionaryAsync(i => i.DirPath);
 
+            int cacheWrites = 0;
+
             foreach (var itemDir in itemDirs)
             {
+                logger.Debug("Starting to parse item {name}", Path.GetFileName(itemDir));
+
                 var isNewItem = !items.ContainsKey(itemDir);
 
                 var item = isNewItem
@@ -65,13 +80,14 @@ public class BackupParser(ILogger logger, Paths paths, MainContext context)
                 }
 
                 var otherFiles = Directory.EnumerateFiles(itemDir)
-                        .Except(metadatas)
-                        .ToDictionary(f => long.Parse(Path.GetFileNameWithoutExtension(f)));
+                    .Except(metadatas)
+                    .ToDictionary(f => long.Parse(Path.GetFileNameWithoutExtension(f)));
+
                 var cached = await context.Cache
                     .AsNoTracking()
                     .Where(c => metadatas.Contains(c.Path))
                     .ToDictionaryAsync(c => c.Path);
-                
+
                 foreach (var metadata in metadatas)
                 {
                     bool mismatch = false;
@@ -107,14 +123,23 @@ public class BackupParser(ILogger logger, Paths paths, MainContext context)
                     {
                         context.Cache.Add(newCache);
                     }
+
+                    ++cacheWrites;
                 }
 
                 if (isNewItem)
                     context.Set<T>().Add(item);
+
+                logger.Debug("Successfully parsed item {name}", Path.GetFileName(itemDir));
             }
 
             await context.SaveChangesAsync();
             context.ChangeTracker.Clear();
+
+            logger.Debug("Successfully parsed day {name}, total cache writes: {writes}", Path.GetFileName(dayDir), cacheWrites);
+            _totalCacheWrites += cacheWrites;
+
+            IncreaseDaysCount();
         }
     }
 
@@ -184,6 +209,18 @@ public class BackupParser(ILogger logger, Paths paths, MainContext context)
 
                 logger.Error("Metadata {metadata} references media {id}, but there's no file with that name", metadata, fileId);
                 return null;
+            }
+            else if (media.TryGetProperty("webpage", out _))
+            {
+                // Ignore for now
+            }
+            else if (media.TryGetProperty("poll", out _))
+            {
+                // Ignore for now
+            }
+            else if (media.TryGetProperty("extended_media", out _))
+            {
+                // Ignore for now
             }
             else
             {

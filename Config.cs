@@ -7,7 +7,10 @@ namespace TgBackupSearch;
 [method: JsonConstructor]
 public class Config(IReadOnlyCollection<string> languages, string tesseractDir = null)
 {
-    private static Config Default { get; } = new Config([ "eng", "rus" ]);
+    private static Config Default { get; } = new Config(
+        languages: [ "eng", "rus" ],
+        tesseractDir: null
+    );
 
     public IReadOnlyCollection<string> Languages { get; } = languages;
 

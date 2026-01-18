@@ -8,4 +8,6 @@ public class Comment : Item
 
     [ForeignKey(nameof(PostId))]
     public Post Post { get; set; }
+
+    public override string BuildLink(ChannelInfo info) => $"https://t.me/c/{info.DiscussionGroupId}/{TelegramId}";
 }

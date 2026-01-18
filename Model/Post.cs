@@ -6,4 +6,6 @@ public class Post : Item
 {
     [InverseProperty(nameof(Comment.Post))]
     public List<Comment> Comments { get; } = new();
+
+    public override string BuildLink(ChannelInfo info) => $"https://t.me/c/{info.ChannelId}/{TelegramId}";
 }

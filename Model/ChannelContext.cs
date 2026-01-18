@@ -1,16 +1,16 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Serilog;
 
 namespace TgBackupSearch.Model;
 
-public class MainContext : DbContext
+public class ChannelContext : DbContext
 {
     public DbSet<Post> Posts { get; set; }
     public DbSet<Media> Media { get; set; }
     public DbSet<Comment> Comments { get; set; }
     public DbSet<MetadataCache> Cache { get; set; }
+    public DbSet<Recognition> Recognitions { get; set; }
 
-    public MainContext(ILogger logger, DbContextOptions<MainContext> options) : base(options)
+    public ChannelContext(DbContextOptions<ChannelContext> options) : base(options)
     {
     }
 

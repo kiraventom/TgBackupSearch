@@ -1,31 +1,29 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.EntityFrameworkCore;
 using Serilog;
-using TgBackupSearch.Parsing;
-using TgBackupSearch.Recognition;
+using TgBackupSearch.Model;
 
 namespace TgBackupSearch;
 
-public class SearchService(ILogger logger, IServiceScopeFactory spf) : BackgroundService
+public class SearchService(ChannelContext context)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public const int MinPromptLength = 3;
+
+    public IQueryable<Item> Search(string prompt)
     {
-        using var scope = spf.CreateScope();
-        var backupParser = scope.ServiceProvider.GetRequiredService<BackupParser>();
-        var recognizer = scope.ServiceProvider.GetRequiredService<Recognizer>();
-        //
-        // Fill database
-        // TODO: Do not parse each time
-        logger.Information("Starting to fill database");
-        await backupParser.ParseMetadata();
-        logger.Information("Database filled");
+        ArgumentNullException.ThrowIfNull(prompt);
 
-        // Recognition
-        logger.Information("Starting to recognize media");
-        await recognizer.Recognize();
-        logger.Information("Media recognized");
+        prompt = prompt.Trim().ToLowerInvariant();
+        if (prompt.Length < MinPromptLength)
+            return Enumerable.Empty<Item>().AsQueryable();
 
-        // Search
-        // TODO
+        var posts = context.Recognitions
+            .AsNoTracking()
+            .Where(r => r.Text.Contains(prompt))
+            .OrderByDescending(r => r.Confidence)
+            .ThenByDescending(r => r.Media.Item.DT)
+            .Select(r => r.Media.Item)
+            .Distinct();
+
+        return posts;
     }
 }

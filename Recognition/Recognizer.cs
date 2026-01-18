@@ -9,9 +9,9 @@ using TgBackupSearch.Video;
 
 namespace TgBackupSearch.Recognition;
 
-public class Recognizer(ILogger logger, Config config, Paths paths, MainContext context, FrameExtractor frameExtractor)
+public class Recognizer(ILogger logger, Config config, Paths paths, ChannelContext context, FrameExtractor frameExtractor)
 {
-    public async Task Recognize()
+    public async Task Recognize(CancellationToken ct)
     {
         var medias = context.Media.Include(p => p.Recognitions);
 
@@ -21,19 +21,21 @@ public class Recognizer(ILogger logger, Config config, Paths paths, MainContext 
 
         foreach (var media in medias.Where(m => m.Recognitions.Count == 0))
         {
+            ct.ThrowIfCancellationRequested();
+
             if (media.Type == MediaType.Photo)
             {
-                var text = await RecognizeText(engines, media.FilePath);
-                media.Recognitions.Add(new Model.Recognition() { Text = text });
+                var token = await RecognizeText(engines, media.FilePath);
+                media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
             }
             else if (media.Type == MediaType.Document)
             {
                 var frames = await frameExtractor.ExtractFrames(media);
                 var tasks = frames.Select(f => RecognizeText(engines, media.FilePath));
-                var texts = await Task.WhenAll(tasks);
+                var tokens = await Task.WhenAll(tasks);
 
-                foreach (var text in texts)
-                    media.Recognitions.Add(new Model.Recognition() { Text = text });
+                foreach (var token in tokens)
+                    media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
             }
             else
             {
@@ -47,7 +49,7 @@ public class Recognizer(ILogger logger, Config config, Paths paths, MainContext 
         await context.SaveChangesAsync();
     }
 
-    private async Task<string> RecognizeText(IReadOnlyCollection<TesseractEngine> engines, string filepath)
+    private async Task<OcrToken> RecognizeText(IReadOnlyCollection<TesseractEngine> engines, string filepath)
     {
         const float threshold = 0.75f;
 
@@ -95,7 +97,9 @@ public class Recognizer(ILogger logger, Config config, Paths paths, MainContext 
         }
 
         var text = string.Join(' ', tokens.Select(t => t.Text));
-        return text;
+        var meanConfidence = tokens.Select(t => t.Confidence).Average();
+        text = text.ToLowerInvariant();
+        return new OcrToken(text, meanConfidence);
     }
 
     private async Task<OcrToken> RecognizeCrop(IReadOnlyCollection<TesseractEngine> engines, Pix pix)

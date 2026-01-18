@@ -13,5 +13,7 @@ public class Recognition
     [ForeignKey(nameof(MediaId))]
     public Media Media { get; set; }
 
+    public float Confidence { get; set; }
+
     public string Text { get; set; }
 }
