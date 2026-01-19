@@ -85,6 +85,8 @@ internal class Program
 
         var host = builder.Build();
 
+        await CreateDb(host.Services);
+
         try
         {
             await host.RunAsync();
@@ -97,6 +99,12 @@ internal class Program
         {
             Log.CloseAndFlush();
         }
+    }
+
+    private static async Task CreateDb(IServiceProvider sp)
+    {
+        using var context = sp.GetRequiredService<ChannelContext>();
+        await context.Database.MigrateAsync();
     }
 
     public static void SetContextOptions(DbContextOptionsBuilder options, Paths paths, ChannelInfo channelInfo)
