@@ -1,140 +1,189 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.Processing;
-using Tesseract;
 using TgBackupSearch.Model;
 using TgBackupSearch.Video;
+using System.Diagnostics;
+using System.Globalization;
 
 namespace TgBackupSearch.Recognition;
 
-public class Recognizer(ILogger logger, Config config, Paths paths, ChannelContext context, FrameExtractor frameExtractor)
+public class Recognizer(ILogger logger, Config config, ChannelContext context, FrameExtractor frameExtractor)
 {
+    private const string TESSERACT_FILENAME = "tesseract";
+    private const string TSV_TYPE = "tsv";
+    private const string TSV_EXTENSION = $".{TSV_TYPE}";
+    private const float CONFIDENCE_THRESHOLD = 0.75f;
+
+    private const int RECOGNITION_CHUNK_SIZE = 50;
+
+    private int _totalRecognizedCount = 0;
+
     public async Task Recognize(CancellationToken ct)
     {
-        var medias = context.Media.Include(p => p.Recognitions);
+        var medias = context.Media
+            .Include(p => p.Recognitions)
+            .Where(m => m.Recognitions.Count == 0)
+            .AsEnumerable();
 
-        var engines = config.Languages
-            .Select(l => new TesseractEngine(paths.TesseractDir, l))
-            .ToList();
+        var chunks = medias.Chunk(RECOGNITION_CHUNK_SIZE);
 
-        foreach (var media in medias.Where(m => m.Recognitions.Count == 0))
+        foreach (var chunk in chunks)
         {
-            ct.ThrowIfCancellationRequested();
+            foreach (var media in chunk)
+            {
+                ct.ThrowIfCancellationRequested();
 
-            if (media.Type == MediaType.Photo)
-            {
-                var token = await RecognizeText(engines, media.FilePath);
-                media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
-            }
-            else if (media.Type == MediaType.Document)
-            {
-                var frames = await frameExtractor.ExtractFrames(media);
-                var tasks = frames.Select(f => RecognizeText(engines, media.FilePath));
-                var tokens = await Task.WhenAll(tasks);
+                switch (media.Type)
+                {
+                    case MediaType.Photo:
+                        await RecognizeImage(media.FilePath, media, ct);
+                        break;
 
-                foreach (var token in tokens)
-                    media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
+                    case MediaType.Document:
+                        var frames = await frameExtractor.ExtractFrames(media);
+
+                        foreach (var frame in frames)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            await RecognizeImage(frame, media, ct);
+
+                            File.Delete(frame);
+                        }
+                        break;
+
+                    default:
+                        logger.Warning("Media {id} has type {type}", media.MediaId, media.Type.ToString());
+                        break;
+                }
             }
-            else
-            {
-                logger.Warning("Media {id} has type {type}", media.MediaId, media.Type.ToString());
-            }
+
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
         }
-
-        foreach (var engine in engines)
-            engine.Dispose();
-
-        await context.SaveChangesAsync();
     }
 
-    private async Task<OcrToken> RecognizeText(IReadOnlyCollection<TesseractEngine> engines, string filepath)
+    private async Task RecognizeImage(string filepath, Media media, CancellationToken ct)
     {
-        const float threshold = 0.75f;
+        var token = await RecognizeText(filepath, ct);
+        media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
+        IncreaseRecognizedCount();
+    }
 
-        using var pix = Pix.LoadFromFile(filepath);
+    private void IncreaseRecognizedCount()
+    {
+        ++_totalRecognizedCount;
 
-        var seedEngine = engines.FirstOrDefault();
-        if (seedEngine is null)
-            return null;
+        if (_totalRecognizedCount % RECOGNITION_CHUNK_SIZE == 0)
+            logger.Information("Recognized {count} files, still going...", _totalRecognizedCount);
+    }
 
-        var otherEngines = engines.Skip(1).ToList();
-
-        var tokens = new List<OcrToken>();
-
-        using var seedPage = await Task.Run(() => seedEngine.Process(pix));
-        using (var iter = seedPage.GetIterator())
-        {
-            iter.Begin();
-            do
-            {
-                var word = iter.GetText(PageIteratorLevel.Word).Trim();
-                if (string.IsNullOrEmpty(word))
-                    continue;
-
-                if (!iter.TryGetBoundingBox(PageIteratorLevel.Word, out var bounds))
-                    continue;
-
-                var confidence = iter.GetConfidence(PageIteratorLevel.Word);
-                var seedToken = new OcrToken(word, confidence);
-
-                if (confidence >= threshold || engines.Count == 1)
-                {
-                    tokens.Add(seedToken);
-                    continue;
-                }
-
-                using var crop = await Crop(filepath, bounds);
-                var token = await RecognizeCrop(otherEngines, crop);
-
-                if (token is not null && token.Confidence > seedToken.Confidence)
-                    tokens.Add(token);
-                else
-                    tokens.Add(seedToken);
-            }
-            while (iter.Next(PageIteratorLevel.Word));
-        }
+    private async Task<OcrToken> RecognizeText(string filepath, CancellationToken ct)
+    {
+        var tokens = await RunTesseract(filepath, ct);
+        if (tokens.Count == 0)
+            return new OcrToken(string.Empty, 100);
 
         var text = string.Join(' ', tokens.Select(t => t.Text));
-        var meanConfidence = tokens.Select(t => t.Confidence).Average();
-        text = text.ToLowerInvariant();
+        var meanConfidence = tokens.Average(t => t.Confidence);
+
         return new OcrToken(text, meanConfidence);
     }
 
-    private async Task<OcrToken> RecognizeCrop(IReadOnlyCollection<TesseractEngine> engines, Pix pix)
+    private async Task<IReadOnlyCollection<OcrToken>> RunTesseract(string filepath, CancellationToken ct)
     {
-        List<OcrToken> tokens = [];
-
-        foreach (var engine in engines)
+        if (!File.Exists(filepath))
         {
-            var prevMode = engine.DefaultPageSegMode;
-            engine.DefaultPageSegMode = PageSegMode.SingleWord;
-            using var page = await Task.Run(() => engine.Process(pix));
-            engine.DefaultPageSegMode = prevMode;
-
-            var word = page.GetText().Trim();
-            if (string.IsNullOrEmpty(word))
-                continue;
-
-            var confidence = page.GetMeanConfidence();
-            var token = new OcrToken(word, confidence);
-            tokens.Add(token);
+            logger.Error("Can't run Tesseract, file '{path}' does not exist", filepath);
+            return [];
         }
 
-        if (tokens.Count == 0)
-            return null;
+        var tsvBaseName = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName().Replace(".", string.Empty));
+        var tsvFile = Path.ChangeExtension(tsvBaseName, TSV_EXTENSION);
 
-        return tokens.MaxBy(t => t.Confidence);
+        var languageArg = string.Join('+', config.Languages);
+        var args = $"\"{filepath}\" \"{tsvBaseName}\" -l {languageArg} --dpi 300 {TSV_TYPE}";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = TESSERACT_FILENAME,
+            Arguments = args,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+        {
+            logger.Error("Failed to start tesseract process");
+            return [];
+        }
+
+        await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0)
+        {
+            var error = await process.StandardError.ReadToEndAsync(ct);
+            logger.Error("Tesseract failed with exit code {code}: {error}", process.ExitCode, error);
+            return [];
+        }
+
+        if (!File.Exists(tsvFile))
+        {
+            logger.Error("Tesseract output file not found: {file}", tsvFile);
+            return [];
+        }
+
+        using var stream = File.OpenText(tsvFile);
+        var token = await ParseTsv(stream, ct);
+
+        File.Delete(tsvFile);
+        return token;
     }
 
-    private async Task<Pix> Crop(string file, Rect bbox)
+    private async Task<IReadOnlyCollection<OcrToken>> ParseTsv(StreamReader stream, CancellationToken ct)
     {
-        using var img = await Image.LoadAsync(file);
-        img.Mutate(i => i.Crop(new Rectangle(bbox.X1, bbox.Y1, bbox.Width, bbox.Height)));
-        using var ms = new MemoryStream();
-        img.Save(ms, new PngEncoder());
-        var bytes = ms.ToArray();
-        return Pix.LoadFromMemory(bytes);
+        Dictionary<string, OcrToken> tokens = [];
+
+        int lineNumber = -1;
+        string line;
+
+        while ((line = await stream.ReadLineAsync(ct)) != null)
+        {
+            ++lineNumber;
+
+            if (lineNumber == 0)
+                continue;
+
+            var parts = line.Split('\t');
+            if (parts.Length < 12)
+                continue;
+
+            var level = parts[0];
+            if (level != "5")
+                continue;
+
+            if (!int.TryParse(parts[6], out var x) ||
+                !int.TryParse(parts[7], out var y) ||
+                !int.TryParse(parts[8], out var width) ||
+                !int.TryParse(parts[9], out var height) ||
+                !float.TryParse(parts[10], CultureInfo.InvariantCulture, out var confidence))
+            {
+                continue;
+            }
+
+            if (confidence < CONFIDENCE_THRESHOLD)
+                continue;
+
+            var text = parts[11];
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            text = text.Trim().ToLowerInvariant();
+            tokens[text] = new OcrToken(text, confidence / 100f);
+        }
+
+        return tokens.Values;
     }
 }

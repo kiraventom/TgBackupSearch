@@ -17,7 +17,7 @@ public class Media
     public List<Recognition> Recognitions { get; } = new();
 
     public long TelegramId { get; set; }
-    public DateTimeOffset DT { get; set; }
+    public DateTime DT { get; set; }
     public string FilePath { get; set; }
     public MediaType Type { get; set; }
 }

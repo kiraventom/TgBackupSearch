@@ -30,7 +30,7 @@ public class FrameExtractor(ILogger logger)
         return frames;
     }
 
-    private async Task<IReadOnlyCollection<string>> ExtractFrames(string filepath, int frameCount = 10)
+    private async Task<IReadOnlyCollection<string>> ExtractFrames(string filepath, int frameCount = 5)
     {
         double duration = 0;
 
@@ -38,10 +38,6 @@ public class FrameExtractor(ILogger logger)
         {
             logger.Error("Can't extract {frameCount} frames", frameCount);
             return [];
-        }
-        else if (frameCount == 1)
-        {
-            duration = 0;
         }
         else
         {
@@ -52,22 +48,27 @@ public class FrameExtractor(ILogger logger)
             duration = durationNullable.Value;
         }
 
+        var step = duration / (frameCount + 1);
+
         List<string> frames = [];
 
         for (int i = 0; i < frameCount; ++i)
         {
-            var timestamp = duration * (i / (double)(frameCount - 1));
-            var framePath = Path.GetTempFileName();
+            var timestamp = step * (i + 1);
+            var framePath = Path.ChangeExtension(Path.Combine(Path.GetTempPath(), Path.GetRandomFileName().Replace(".", string.Empty)), ".png");
 
             var result = await RunFfmpeg($"-hide_banner -y -ss {timestamp} -i \"{filepath}\" -frames:v 1 \"{framePath}\"");
 
             if (result.ExitCode != 0)
             {
-                logger.Error("Couldn't extract frame at {timestamp}, ffmpeg returned {exitCode}", timestamp, result.ExitCode);
-                continue;
+                logger.Error("{file}: couldn't extract frame at {timestamp}, ffmpeg returned {exitCode}", filepath, timestamp, result.ExitCode);
+                return [];
             }
 
-            frames.Add(framePath);
+            if (File.Exists(framePath))
+                frames.Add(framePath);
+            else
+                logger.Warning("{path}: ffmpeg returned 0, but frame [{i}] at {ts} '{framePath}' does not exist", filepath, i, timestamp, framePath);
         }
 
         return frames;

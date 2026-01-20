@@ -4,6 +4,6 @@ namespace TgBackupSearch.IO;
 
 public interface IIOInterface
 {
-    Task<string> GetInput();
-    Task SetOutput(IQueryable<Item> items);
+    Task<ISearchQuery> GetInput();
+    Task SetOutput(IReadOnlyCollection<Item> items);
 }

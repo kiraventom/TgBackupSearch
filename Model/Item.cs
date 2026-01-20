@@ -20,7 +20,7 @@ public abstract class Item
     public string DirPath { get; set; }
     public int TelegramId { get; set; }
 
-    public DateTimeOffset DT { get; set; }
+    public DateTime DT { get; set; }
     public string Text { get; set; }
 
     public abstract string BuildLink(ChannelInfo info);

@@ -17,10 +17,10 @@ public class AppService(ILogger logger, IIOInterface io, IServiceScopeFactory sp
         while (true)
         {
             using var scope = spf.CreateScope();
-            var prompt = await io.GetInput();
+            var query = await io.GetInput();
 
             var searchService = scope.ServiceProvider.GetRequiredService<SearchService>();
-            var results = searchService.Search(prompt);
+            var results = await searchService.GetResults(query);
 
             await io.SetOutput(results);
         }

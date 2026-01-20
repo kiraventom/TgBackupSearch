@@ -164,7 +164,7 @@ public class BackupParser(ILogger logger, RunOptions runOptions, Paths paths, Ch
             item.TelegramId = id;
 
         if (item.DT == default || item.DT > dt)
-            item.DT = dt;
+            item.DT = dt.UtcDateTime;
 
         if (!string.IsNullOrEmpty(text))
             item.Text = text;
@@ -176,7 +176,7 @@ public class BackupParser(ILogger logger, RunOptions runOptions, Paths paths, Ch
             var mediaModel = new Media()
             {
                 TelegramId = id,
-                DT = dt,
+                DT = dt.UtcDateTime,
                 FilePath = m.File,
                 Type = m.Type,
             };
