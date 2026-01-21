@@ -77,7 +77,7 @@ public class FrameExtractor(ILogger logger)
     private async Task<double?> GetDurationSeconds(string filepath)
     {
         var result = await RunFfprobe($"-v error -show_entries format=duration -of default=nw=1:nk=1 \"{filepath}\"");
-        
+
         if (result.ExitCode != 0)
         {
             logger.Error("Can't get duration: ffprobe returned {exitCode}", result.ExitCode);
@@ -94,19 +94,40 @@ public class FrameExtractor(ILogger logger)
 
     private async Task<bool> IsVideo(string filepath)
     {
-        var result = await RunFfprobe($"-v error -show_entries stream=codec_type -of default=nw=1 \"{filepath}\"");
+        var formatResult = await RunFfprobe(
+            $"-v error -show_entries format=format_name -of default=nw=1:nk=1 \"{filepath}\"");
 
-        if (result.ExitCode != 0)
+        if (formatResult.ExitCode != 0)
         {
-            logger.Error("Can't check if media is video: ffprobe returned {exitCode}", result.ExitCode);
+            logger.Information("{path}: Can't check container: ffprobe returned {exitCode}", filepath, formatResult.ExitCode);
             return false;
         }
 
-        var isVideo = result.Output
+        var formatNames = formatResult.Output
+            .Trim()
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var isMovOrMp4Family = formatNames.Any(n =>
+            n.Equals("mov", StringComparison.OrdinalIgnoreCase) ||
+            n.Equals("mp4", StringComparison.OrdinalIgnoreCase));
+
+        if (!isMovOrMp4Family)
+            return false;
+
+        var videoStreamResult = await RunFfprobe(
+            $"-v error -select_streams V -show_entries stream=codec_type -of default=nw=1 \"{filepath}\"");
+
+        if (videoStreamResult.ExitCode != 0)
+        {
+            logger.Error("Can't check if media has video stream: ffprobe returned {exitCode}", videoStreamResult.ExitCode);
+            return false;
+        }
+
+        var hasRealVideoStream = videoStreamResult.Output
             .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(l => l.Equals("codec_type=video", StringComparison.OrdinalIgnoreCase));
 
-        return isVideo;
+        return hasRealVideoStream;
     }
 
     private static Task<FfmpegResult> RunFfmpeg(string arguments) => RunTool("ffmpeg", arguments);
