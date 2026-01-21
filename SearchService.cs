@@ -36,17 +36,29 @@ public class SearchService(ILogger logger, ChannelContext context)
             results = items
                 .AsNoTracking()
                 .Where(p => p.Text.ToLower().Contains(prompt))
-                .OrderByDescending(p => p.DT);
+                .OrderByDescending(p => p.DT)
+                .Skip(query.Offset)
+                .Take(query.Count);
         }
         else if (mode == SearchMode.Recognition)
         {
-            results = context.Recognitions
+            results = items
                 .AsNoTracking()
-                .Where(r => r.Text.Contains(prompt))
-                .OrderByDescending(r => r.Confidence)
-                .ThenByDescending(r => r.Media.Item.DT)
-                .Select(r => r.Media.Item)
-                .Distinct();
+                .Where(i => i.Media.Any(m => m.Recognitions.Any(r => r.Text.Contains(prompt))))
+                .Select(i => new
+                {
+                    Item = i,
+                    Best = i.Media.SelectMany(m => m.Recognitions)
+                        .Where(r => r.Text.Contains(prompt))
+                        .OrderByDescending(r => r.Confidence)
+                        .Select(r => r.Confidence)
+                        .First()
+                })
+                .OrderByDescending(x => x.Best)
+                .ThenByDescending(x => x.Item.DT)
+                .Select(x => x.Item)
+                .Skip(query.Offset)
+                .Take(query.Count);
         }
         else
         {
@@ -54,7 +66,7 @@ public class SearchService(ILogger logger, ChannelContext context)
         }
 
 
-        var list = await results.Skip(query.Offset).Take(query.Count).ToListAsync();
+        var list = await results.ToListAsync();
         return list;
     }
 }

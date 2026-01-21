@@ -62,7 +62,7 @@ public class ConsoleIO(ChannelInfo channelInfo) : IIOInterface
         foreach (var item in items)
         {
             var link = item.BuildLink(channelInfo);
-            Console.Write(count);
+            Console.Write(count++);
             Console.WriteLine($". {link}");
         }
 
