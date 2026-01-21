@@ -1,14 +1,14 @@
 ﻿using System.Text.Json;
 using Serilog;
-using TgBackupSearch.Model;
+using TgChannelLib.Model;
 
-namespace TgBackupSearch.Parsing;
+namespace TgChannelRecognize.Parsing;
 
 public class PostParser(ILogger logger, RunOptions runOptions, IReadOnlyCollection<CommentChain> comments) : IItemParser
 {
     public void ParseItem(Item item, JsonElement rootEl)
     {
-        if (!runOptions.ShouldBackupDiscussionGroup)
+        if (!runOptions.HasDiscussionGroup)
             return;
 
         if (item is not Post post)

@@ -1,8 +1,8 @@
 ﻿using System.Text.Json;
 using Serilog;
-using TgBackupSearch.Model;
+using TgChannelLib.Model;
 
-namespace TgBackupSearch.Parsing;
+namespace TgChannelRecognize.Parsing;
 
 public class CommentParser(ILogger logger) : IItemParser
 {

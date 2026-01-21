@@ -1,22 +1,21 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Events;
-using TgBackupSearch.IO;
-using TgBackupSearch.Model;
-using TgBackupSearch.Parsing;
-using TgBackupSearch.Recognition;
-using TgBackupSearch.Utils;
-using TgBackupSearch.Video;
+using TgChannelRecognize.Parsing;
+using TgChannelRecognize.Recognition;
+using TgChannelRecognize.Utils;
+using TgChannelRecognize.Video;
+using TgChannelLib.Model;
 
-namespace TgBackupSearch;
+namespace TgChannelRecognize;
 
 internal class Program
 {
-    private const string PROJECT_NAME = "TgBackupSearch";
+    private const string PROJECT_NAME = "TgChannelRecognize";
 
     private static async Task Main(string[] args)
     {
@@ -25,7 +24,7 @@ internal class Program
 
         var logger = BuildLogger(appDataDir);
 
-        if (!TryGetRunOptions(args, out var channelDir, out var discussionDir, out var mode))
+        if (!TryGetRunOptions(args, out var runOptions))
         {
             logger.Fatal("Failed to parse arguments, closing");
             return;
@@ -50,10 +49,8 @@ internal class Program
             return;
         }
 
-        var paths = new Paths(appDataDir, appConfigDir, tesseractDir, channelDir, discussionDir);
+        var paths = new AppPaths(appDataDir, appConfigDir, tesseractDir);
         CheckPaths(paths);
-
-        var runOptions = new RunOptions(mode, !string.IsNullOrEmpty(discussionDir));
 
         var builder = Host.CreateApplicationBuilder();
 
@@ -63,24 +60,21 @@ internal class Program
             .AddSingleton(paths)
             .AddSingleton(runOptions)
             .AddSingleton<ChannelInfo>()
-            .AddKeyedSingleton<IIOInterface, ConsoleIO>(IOMode.Console)
-            .AddKeyedSingleton<IIOInterface, WebIO>(IOMode.Web)
-            .AddKeyedSingleton<IIOInterface, TelegramIO>(IOMode.Telegram)
-            .AddSingleton<IIOInterface>(static sp =>
-            {
-                var runOptions = sp.GetRequiredService<RunOptions>();
-                return sp.GetRequiredKeyedService<IIOInterface>(runOptions.Mode);
-            })
             .AddDbContext<ChannelContext>(static (sp, options) =>
             {
-                var paths = sp.GetRequiredService<Paths>();
+                var paths = sp.GetRequiredService<AppPaths>();
                 var channelInfo = sp.GetRequiredService<ChannelInfo>();
                 Program.SetContextOptions(options, paths, channelInfo);
             })
-            .AddTransient<BackupParser>()
+            .AddKeyedTransient<IMetadataParser, NetworkParser>(RunMode.Network)
+            .AddKeyedTransient<IMetadataParser, OfflineParser>(RunMode.Offline)
+            .AddTransient<IMetadataParser>(sp => 
+            {
+                var runOptions = sp.GetRequiredService<RunOptions>();
+                return sp.GetRequiredKeyedService<IMetadataParser>(runOptions.RunMode);
+            })
             .AddTransient<Recognizer>()
             .AddTransient<FrameExtractor>()
-            .AddScoped<SearchService>()
             .AddHostedService<AppService>();
 
         var host = builder.Build();
@@ -107,21 +101,22 @@ internal class Program
         await context.Database.MigrateAsync();
     }
 
-    public static void SetContextOptions(DbContextOptionsBuilder options, Paths paths, ChannelInfo channelInfo)
+    public static void SetContextOptions(DbContextOptionsBuilder options, AppPaths paths, ChannelInfo channelInfo)
     {
-        var dbPath = Path.Combine(paths.AppDataDir, $"{channelInfo.ChannelId}.db");
+        var dbPath = BuildDbPath(paths, channelInfo);
         options.UseSqlite($"Data Source={dbPath};");
     }
 
-    private static void CheckPaths(Paths paths)
+    public static string BuildDbPath(AppPaths paths, ChannelInfo channelInfo)
+    {
+        return Path.Combine(paths.AppDataDir, $"{channelInfo.ChannelId}.db");
+    }
+
+    private static void CheckPaths(AppPaths paths)
     {
         ThrowIfDirNotValid(paths.AppConfigDir);
         ThrowIfDirNotValid(paths.AppDataDir);
         ThrowIfDirNotValid(paths.TesseractDir);
-        ThrowIfDirNotValid(paths.ChannelDir);
-
-        if (paths.DiscussionGroupDir is not null)
-            ThrowIfDirNotValid(paths.DiscussionGroupDir);
     }
 
     private static void ThrowIfDirNotValid(string path)
@@ -261,39 +256,27 @@ internal class Program
         return result;
     }
 
-    public static bool TryGetRunOptions(string[] args, out string channelDir, out string discussionDir, out IOMode mode)
+    public static bool TryGetRunOptions(string[] args, out RunOptions runOptions)
     {
-        channelDir = null;
-        discussionDir = null;
-        mode = IOMode.Console;
+        runOptions = null;
 
-        var modeNames = Enum.GetNames<IOMode>().Select(n => n.ToLower()).ToArray();
-        var modeNamesStr = string.Join(", ", modeNames);
-
-        var channelDirOpt = new Option<string>("--channelDir", "-c")
+        var channelOption = new Option<string>("--channel", "-c")
         {
-            HelpName = "Channel directory",
+            HelpName = "Channel (ID or directory)",
             Required = true,
-            Description = "Path to the directory of channel backup"
+            Description = "Either ID of channel or path to the directory of channel backup"
         }.AcceptLegalFilePathsOnly();
 
-        var discussionDirOpt = new Option<string>("--discussionDir", "-d")
+        var discussionOption = new Option<string>("--discussion", "-d")
         {
-            HelpName = "Discussion group directory",
+            HelpName = "Discussion group (ID or directory)",
             Required = false,
-            Description = "Path to the directory of discussion group backup. If not specified, discussion group will not be included in search"
+            Description = "Either ID of discussion group or path to the directory of discussion group backup"
         }.AcceptLegalFilePathsOnly();
-
-        var modeOpt = new Option<string>("--mode", "-m")
-        {
-            HelpName = "Launch mode",
-            Required = false,
-            Description = $"Launch mode. Valid values: {modeNamesStr}."
-        }.AcceptOnlyFromAmong(modeNames);
 
         var rootCommand = new RootCommand()
         {
-            channelDirOpt, discussionDirOpt, modeOpt
+            channelOption, discussionOption
         };
 
         var parseResult = rootCommand.Parse(args);
@@ -303,18 +286,48 @@ internal class Program
         if (parseResult.Errors.Any())
             return false;
 
-        channelDir = parseResult.GetRequiredValue(channelDirOpt);
-        discussionDir = parseResult.GetValue(discussionDirOpt);
-        var modeStr = parseResult.GetValue(modeOpt);
+        var channelStr = parseResult.GetRequiredValue<string>(channelOption);
 
-        if (!string.IsNullOrEmpty(modeStr))
+        var hasDiscussion = parseResult.GetResult(discussionOption) is not null;
+        var discussionStr = parseResult.GetValue<string>(discussionOption);
+
+        if (long.TryParse(channelStr, out var channelId))
         {
-            if (!Enum.TryParse<IOMode>(modeStr, out var newMode))
-                Log.Warning("Failed to parse mode \"{mode}\", fallback to \"{default}\"", modeStr, Enum.GetName<IOMode>(mode).ToLower());
-            else
-                mode = newMode;
+            if (!hasDiscussion)
+            {
+                runOptions = new RunOptions(channelId);
+                return true;
+            }
+
+            if (long.TryParse(discussionStr, out var discussionGroupId))
+            {
+                runOptions = new RunOptions(channelId, discussionGroupId);
+                return true;
+            }
+
+            Log.Error("{channelOpt} is set to channel ID {channelID}, but {groupOpt} is set to {value} which is not parseable as ID", channelOption.Name, channelId, discussionOption.Name, discussionStr);
+            return false;
         }
 
+        if (!Directory.Exists(channelStr))
+        {
+            Log.Error("Directory {path} does not exist", channelStr);
+            return false;
+        }
+
+        if (!hasDiscussion)
+        {
+            runOptions = new RunOptions(channelStr);
+            return true;
+        }
+
+        if (!Directory.Exists(discussionStr))
+        {
+            Log.Error("Directory {path} does not exist", discussionStr);
+            return false;
+        }
+
+        runOptions = new RunOptions(channelStr, discussionStr);
         return true;
     }
 

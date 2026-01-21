@@ -1,6 +1,6 @@
-﻿using TgBackupSearch.Model;
+﻿using TgChannelLib.Model;
 
-namespace TgBackupSearch.Parsing;
+namespace TgChannelRecognize.Parsing;
 
 public record CommentChain(int TopId, IReadOnlyDictionary<int, Comment> Comments);
 

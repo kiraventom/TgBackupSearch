@@ -2,7 +2,7 @@
 using System.Text.Json.Serialization;
 using Serilog;
 
-namespace TgBackupSearch;
+namespace TgChannelRecognize;
 
 [method: JsonConstructor]
 public class Config(IReadOnlyCollection<string> languages, string tesseractDir = null)

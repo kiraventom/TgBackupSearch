@@ -1,4 +1,6 @@
-﻿namespace TgBackupSearch;
+﻿using TgChannelLib;
 
-public record Paths(string AppDataDir, string AppConfigDir, string TesseractDir, string ChannelDir, string DiscussionGroupDir = null);
+namespace TgChannelRecognize;
+
+public record AppPaths(string AppDataDir, string AppConfigDir, string TesseractDir) : IAppPaths;
 

@@ -1,9 +1,9 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using Serilog;
-using TgBackupSearch.Model;
+using TgChannelLib.Model;
 
-namespace TgBackupSearch.Video;
+namespace TgChannelRecognize.Video;
 
 public record FfmpegResult(int ExitCode, string Output, string Error);
 

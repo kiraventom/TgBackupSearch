@@ -1,7 +1,7 @@
 ﻿using System.Text.Json;
-using TgBackupSearch.Model;
+using TgChannelLib.Model;
 
-namespace TgBackupSearch.Parsing;
+namespace TgChannelRecognize.Parsing;
 
 public interface IItemParser
 {

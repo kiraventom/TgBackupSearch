@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics;
 
-namespace TgBackupSearch.Utils;
+namespace TgChannelRecognize.Utils;
 
 public static class ProcessHelper
 {

@@ -1,13 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Serilog;
-using TgBackupSearch.Model;
-using TgBackupSearch.Video;
+using TgChannelLib.Model;
+using TgChannelRecognize.Video;
 using System.Diagnostics;
 using System.Globalization;
 
-namespace TgBackupSearch.Recognition;
+namespace TgChannelRecognize.Recognition;
 
-public class Recognizer(ILogger logger, Config config, ChannelContext context, FrameExtractor frameExtractor)
+public class Recognizer(ILogger logger, Config config, TgChannelLib.Model.ChannelContext context, FrameExtractor frameExtractor)
 {
     private const string TESSERACT_FILENAME = "tesseract";
     private const string TSV_TYPE = "tsv";
@@ -65,7 +65,7 @@ public class Recognizer(ILogger logger, Config config, ChannelContext context, F
     private async Task RecognizeImage(string filepath, Media media, CancellationToken ct)
     {
         var token = await RecognizeText(filepath, ct);
-        media.Recognitions.Add(new Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
+        media.Recognitions.Add(new TgChannelLib.Model.Recognition() { Text = token.Text, Confidence = token.Confidence });
         IncreaseRecognizedCount();
     }
 
