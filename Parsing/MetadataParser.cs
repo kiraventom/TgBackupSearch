@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using TgChannelLib.Model;
@@ -10,25 +11,35 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
     protected const string METADATA_PATTERN = "metadata*.json";
 
     protected ILogger Logger { get; } = logger;
+    protected ChannelContext Context { get; } = context;
+
+    protected abstract bool IgnoreMismatch { get; }
 
     protected int _daysParsed = 0;
     protected int _totalCacheWrites = 0;
 
-    public async Task ParseMetadata(CancellationToken ct)
+    public virtual Task Init()
+    {
+        return Task.CompletedTask;
+    }
+
+    public async IAsyncEnumerable<Media> GetUnrecognizedMedia([EnumeratorCancellation] CancellationToken ct)
     {
         Logger.Information("Starting to parse metadata...");
 
         IReadOnlyCollection<CommentChain> comments = await ParseComments(ct);
-        await ParseChannel(comments, ct);
-        await context.SaveChangesAsync();
+        await foreach (var media in ParseChannel(comments, ct))
+            yield return media;
+
+        await Context.SaveChangesAsync();
 
         Logger.Information("Successfully parsed metadata, days parsed: {days}, total cache writes: {writes}", _daysParsed, _totalCacheWrites);
     }
 
-    protected abstract Task ParseChannel(IReadOnlyCollection<CommentChain> comments, CancellationToken ct);
+    protected abstract IAsyncEnumerable<Media> ParseChannel(IReadOnlyCollection<CommentChain> comments, CancellationToken ct);
     protected abstract Task<IReadOnlyCollection<CommentChain>> ParseComments(CancellationToken ct);
 
-    protected async Task ParseDay<T>(IItemParser itemParser, string dayDir, CancellationToken ct, IProgress<int> cacheWritesProgress = null) where T : Item, new()
+    protected async IAsyncEnumerable<Media> ParseDay<T>(IItemParser itemParser, string dayDir, [EnumeratorCancellation] CancellationToken ct, IProgress<int> cacheWritesProgress = null) where T : Item, new()
     {
         ct.ThrowIfCancellationRequested();
 
@@ -37,7 +48,7 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
         var itemDirs = Directory.EnumerateDirectories(dayDir)
             .ToHashSet();
 
-        var items = await context.Set<T>()
+        var items = await Context.Set<T>()
             .Where(i => itemDirs.Contains(i.DirPath))
             .ToDictionaryAsync(i => i.DirPath);
 
@@ -64,7 +75,7 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
                 .Except(metadatas)
                 .ToDictionary(f => long.Parse(Path.GetFileNameWithoutExtension(f)));
 
-            var cached = await context.Cache
+            var cached = await Context.Cache
                 .AsNoTracking()
                 .Where(c => metadatas.Contains(c.Path))
                 .ToDictionaryAsync(c => c.Path);
@@ -82,17 +93,20 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
 
                 if (cached.TryGetValue(metadata, out var cache))
                 {
-                    if (cache.Equals(newCache))
+                    if (cache.Equals(newCache) || IgnoreMismatch)
                         continue;
 
                     mismatch = true;
                 }
 
-                await ParseMetadata(fi, item, otherFiles, itemParser);
+                await foreach (var media in ParseMetadata(fi, item, otherFiles, itemParser))
+                {
+                    yield return media;
+                }
 
                 if (mismatch)
                 {
-                    await context.Cache
+                    await Context.Cache
                         .Where(c => c.Path == metadata)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(c => c.LastWriteDT, newCache.LastWriteDT)
@@ -102,26 +116,26 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
                 }
                 else
                 {
-                    context.Cache.Add(newCache);
+                    Context.Cache.Add(newCache);
                 }
 
                 cacheWritesProgress?.Report(1);
             }
 
             if (isNewItem)
-                context.Set<T>().Add(item);
+                Context.Set<T>().Add(item);
 
             Logger.Debug("Successfully parsed item {name}", Path.GetFileName(itemDir));
         }
 
-        await context.SaveChangesAsync();
-        context.ChangeTracker.Clear();
+        await Context.SaveChangesAsync();
+        Context.ChangeTracker.Clear();
 
         Logger.Debug("Successfully parsed day {name}", Path.GetFileName(dayDir));
         IncreaseDaysCount();
     }
 
-    private async Task ParseMetadata(FileInfo metadata, Item item, IReadOnlyDictionary<long, string> otherFiles, IItemParser itemParser)
+    private async IAsyncEnumerable<Media> ParseMetadata(FileInfo metadata, Item item, IReadOnlyDictionary<long, string> otherFiles, IItemParser itemParser)
     {
         JsonDocument jDoc;
 
@@ -160,6 +174,7 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
             };
 
             item.Media.Add(mediaModel);
+            yield return mediaModel;
         }
 
         itemParser.ParseItem(item, rootEl);
@@ -210,43 +225,7 @@ public abstract class MetadataParser(ILogger logger, ChannelContext context) : I
         return null;
     }
 
-    private MetadataCache BuildCache(string file, out FileInfo fileInfo)
-    {
-        fileInfo = null;
-
-        try
-        {
-            fileInfo = new FileInfo(file);
-        }
-        catch (Exception e)
-        {
-            Logger.Error(e.Message);
-            Logger.Error("Failed to read file {file}, skipping", file);
-            return null;
-        }
-
-        DateTimeOffset lastWriteDt;
-        long size;
-
-        try
-        {
-            lastWriteDt = new DateTimeOffset(fileInfo.LastWriteTimeUtc);
-            size = fileInfo.Length;
-        }
-        catch (Exception e)
-        {
-            Logger.Error(e.Message);
-            Logger.Error("Failed to read file {file} metadata, skipping", file);
-            return null;
-        }
-
-        return new MetadataCache
-        {
-            Path = file,
-            LastWriteDT = lastWriteDt,
-            Size = size
-        };
-    }
+    protected abstract MetadataCache BuildCache(string file, out FileInfo fileInfo);
 
     protected virtual void IncreaseDaysCount()
     {

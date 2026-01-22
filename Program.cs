@@ -10,15 +10,19 @@ using TgChannelRecognize.Recognition;
 using TgChannelRecognize.Utils;
 using TgChannelRecognize.Video;
 using TgChannelLib.Model;
+using TgChannelBackup.Core;
+using TgChannelBackup.Core.Downloader;
 
 namespace TgChannelRecognize;
 
 internal class Program
 {
-    private const string PROJECT_NAME = "TgChannelRecognize";
+    public const string PROJECT_NAME = "TgChannelRecognize";
 
     private static async Task Main(string[] args)
     {
+        DotNetEnv.Env.Load();
+
         var appDataDir = CreateAppDataDir();
         var appConfigDir = CreateAppConfigDir();
 
@@ -75,6 +79,11 @@ internal class Program
             })
             .AddTransient<Recognizer>()
             .AddTransient<FrameExtractor>()
+            .AddSingleton<TelegramService>()
+            .AddTransient<IDownloadOptions, DownloadOptionsStub>()
+            .AddSingleton<PhotoDownloader>()
+            .AddSingleton<DocumentDownloader>()
+            .AddSingleton<MessageProcessor>()
             .AddHostedService<AppService>();
 
         var host = builder.Build();
@@ -390,6 +399,12 @@ internal class Program
             .CreateLogger();
 
         Log.Logger = logger;
+
+        WTelegram.Helpers.Log = (lvl, msg) => 
+        {
+            if (lvl is >= (int)LogEventLevel.Warning)
+                logger.Write((LogEventLevel)lvl, msg);
+        }; 
 
         return logger;
     }

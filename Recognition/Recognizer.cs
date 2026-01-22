@@ -7,59 +7,68 @@ using System.Globalization;
 
 namespace TgChannelRecognize.Recognition;
 
-public class Recognizer(ILogger logger, Config config, TgChannelLib.Model.ChannelContext context, FrameExtractor frameExtractor)
+public class Recognizer(ILogger logger, RunOptions runOptions, Config config, TgChannelLib.Model.ChannelContext context, FrameExtractor frameExtractor)
 {
     private const string TESSERACT_FILENAME = "tesseract";
     private const string TSV_TYPE = "tsv";
     private const string TSV_EXTENSION = $".{TSV_TYPE}";
     private const float CONFIDENCE_THRESHOLD = 0.75f;
 
-    private const int RECOGNITION_CHUNK_SIZE = 50;
+    private const int OFFLINE_CHUNK_SIZE = 50;
+    private const int NETWORK_CHUNK_SIZE = 1;
 
     private int _totalRecognizedCount = 0;
 
-    public async Task Recognize(CancellationToken ct)
+    private async Task RecognizeMedia(Media media, CancellationToken ct)
     {
-        var medias = context.Media
-            .Include(p => p.Recognitions)
-            .Where(m => m.Recognitions.Count == 0)
-            .AsEnumerable();
+        ct.ThrowIfCancellationRequested();
 
-        var chunks = medias.Chunk(RECOGNITION_CHUNK_SIZE);
+        switch (media.Type)
+        {
+            case MediaType.Photo:
+                await RecognizeImage(media.FilePath, media, ct);
+                break;
 
-        foreach (var chunk in chunks)
+            case MediaType.Document:
+                var frames = await frameExtractor.ExtractFrames(media);
+
+                foreach (var frame in frames)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await RecognizeImage(frame, media, ct);
+
+                    File.Delete(frame);
+                }
+                break;
+
+            default:
+                logger.Warning("Media {id} has type {type}", media.MediaId, media.Type.ToString());
+                break;
+        }
+    }
+
+    public async Task Recognize(IAsyncEnumerable<Media> medias, CancellationToken ct)
+    {
+        logger.Information("Starting to recognize media");
+
+        var chunkSize = runOptions.RunMode == RunMode.Offline
+            ? OFFLINE_CHUNK_SIZE
+            : NETWORK_CHUNK_SIZE;
+
+        var chunks = medias.Chunk(chunkSize);
+
+        await foreach (var chunk in chunks)
         {
             foreach (var media in chunk)
             {
-                ct.ThrowIfCancellationRequested();
-
-                switch (media.Type)
-                {
-                    case MediaType.Photo:
-                        await RecognizeImage(media.FilePath, media, ct);
-                        break;
-
-                    case MediaType.Document:
-                        var frames = await frameExtractor.ExtractFrames(media);
-
-                        foreach (var frame in frames)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            await RecognizeImage(frame, media, ct);
-
-                            File.Delete(frame);
-                        }
-                        break;
-
-                    default:
-                        logger.Warning("Media {id} has type {type}", media.MediaId, media.Type.ToString());
-                        break;
-                }
+                await RecognizeMedia(media, ct);
             }
 
             await context.SaveChangesAsync();
             context.ChangeTracker.Clear();
         }
+
+        logger.Information("Media recognized");
     }
 
     private async Task RecognizeImage(string filepath, Media media, CancellationToken ct)
@@ -73,7 +82,7 @@ public class Recognizer(ILogger logger, Config config, TgChannelLib.Model.Channe
     {
         ++_totalRecognizedCount;
 
-        if (_totalRecognizedCount % RECOGNITION_CHUNK_SIZE == 0)
+        if (_totalRecognizedCount % OFFLINE_CHUNK_SIZE == 0)
             logger.Information("Recognized {count} files, still going...", _totalRecognizedCount);
     }
 

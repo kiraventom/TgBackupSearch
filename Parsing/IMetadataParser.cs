@@ -1,7 +1,10 @@
-﻿namespace TgChannelRecognize.Parsing;
+﻿using TgChannelLib.Model;
+
+namespace TgChannelRecognize.Parsing;
 
 public interface IMetadataParser
 {
-    Task ParseMetadata(CancellationToken ct);
+    Task Init();
+    IAsyncEnumerable<Media> GetUnrecognizedMedia(CancellationToken ct);
 }
 

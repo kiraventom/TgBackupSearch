@@ -8,6 +8,8 @@ public class ChannelInfo : IChannelInfo
     public long ChannelId { get; }
     public long? DiscussionGroupId { get; }
 
+    public bool HasDiscussionGroup => DiscussionGroupId is not null;
+
     public ChannelInfo(ILogger logger, RunOptions runOptions)
     {
         if (runOptions.RunMode == RunMode.Network)
