@@ -15,7 +15,7 @@ public class NetworkParser(ILogger logger, RunOptions runOptions, ChannelContext
     protected override async IAsyncEnumerable<Media> ParseChannel(IReadOnlyCollection<CommentChain> comments, [EnumeratorCancellation] CancellationToken ct)
     {
         var channel = await telegramService.GetChannelById(runOptions.ChannelId);
-        var startId = Context.Posts.Select(p => p.TelegramId).Max();
+        var startId = Context.Posts.Any() ? Context.Posts.Select(p => p.TelegramId).Max() : 0;
         var postParser = new PostParser(Logger, runOptions, comments);
 
         string lastDayPath = null;
