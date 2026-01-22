@@ -42,9 +42,11 @@ public class Recognizer(ILogger logger, RunOptions runOptions, Config config, Tg
                 break;
 
             default:
-                logger.Warning("Media {id} has type {type}", media.MediaId, media.Type.ToString());
+                logger.Warning("Media {id} has type {type}", media.TelegramId, media.Type.ToString());
                 break;
         }
+
+        logger.Information("Media {path} recognized", media.FilePath);
     }
 
     public async Task Recognize(IAsyncEnumerable<Media> medias, CancellationToken ct)

@@ -23,7 +23,7 @@ public class NetworkParser(ILogger logger, RunOptions runOptions, ChannelContext
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!result.Success)
+            if (result is null || !result.Success)
                 continue;
 
             var postPath = Path.GetDirectoryName(result.Path);
@@ -44,6 +44,7 @@ public class NetworkParser(ILogger logger, RunOptions runOptions, ChannelContext
                     yield return media;
 
                 Directory.Delete(lastDayPath, recursive: true);
+                Logger.Information("Day {day} recognized, deleted", lastDayPath);
                 lastDayPath = dayPath;
             }
         }
