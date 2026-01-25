@@ -5,16 +5,18 @@ using Serilog;
 namespace TgChannelRecognize;
 
 [method: JsonConstructor]
-public class Config(IReadOnlyCollection<string> languages, string tesseractDir = null)
+public class Config(IReadOnlyCollection<string> languages, string tesseractFile = null, string tessdataDir = null)
 {
     private static Config Default { get; } = new Config(
         languages: [ "eng", "rus" ],
-        tesseractDir: null
+        tesseractFile: "/usr/bin/tesseract",
+        tessdataDir: "/usr/share/tesseract-ocr/5/"
     );
 
     public IReadOnlyCollection<string> Languages { get; } = languages;
 
-    public string TesseractDir { get; } = tesseractDir;
+    public string TesseractFile { get; } = tesseractFile;
+    public string TessdataDir { get; } = tessdataDir;
 
     public static bool TryLoad(string path, out Config config)
     {

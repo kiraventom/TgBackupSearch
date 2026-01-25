@@ -47,7 +47,7 @@ internal class Program
             return;
         }
 
-        if (!TryGetTesseractDir(config, out var tesseractDir))
+        if (!TryGetTessdataDir(config, out var tesseractDir))
         {
             logger.Fatal("Failed to locate tesseract dir, closing");
             return;
@@ -166,49 +166,55 @@ internal class Program
         return true;
     }
 
-    private static bool CheckTesseract()
+    private static bool CheckTesseract(string tesseractFile, ref string resultFile)
     {
-        using var process = ProcessHelper.RunSilent("tesseract", "--version");
+        using var process = ProcessHelper.RunSilent(tesseractFile, "--version");
         process.WaitForExit();
 
         var result = process.ExitCode == 0;
-        if (!result)
-        {
-            if (OperatingSystem.IsLinux())
-            {
-                Log.Logger.Error("Tesseract not found. You can install it with package manager (e.g., sudo apt install tesseract-ocr)");
-            }
-            else
-            {
-                Log.Logger.Error("Tesseract not found");
-            }
-        }
+        if (result)
+            resultFile = tesseractFile;
 
         return result;
     }
 
-    private static bool TryGetTesseractDir(Config config, out string tessdataDir)
+    private static bool TryGetTesseractFile(Config config, out string tesseractFile)
+    {
+        tesseractFile = null;
+
+        if (!string.IsNullOrEmpty(config.TesseractFile) && CheckTesseract(config.TesseractFile, ref tesseractFile))
+            return true;
+
+        if (CheckTesseract("tesseract", ref tesseractFile))
+            return true;
+
+        if (OperatingSystem.IsLinux())
+            Log.Logger.Error("Tesseract not found. You can install it with package manager (e.g., sudo apt install tesseract-ocr)");
+        else
+            Log.Logger.Error("Tesseract not found");
+
+        return false;
+    }
+
+    private static bool TryGetTessdataDir(Config config, out string tessdataDir)
     {
         tessdataDir = null;
-
-        if (!CheckTesseract())
-            return false;
 
         if (!CheckTesseractLangs(config))
             return false;
 
-        if (CheckDir(Environment.GetEnvironmentVariable("$TESSDATA_PREFIX"), ref tessdataDir))
+        if (CheckTessdataDir(Environment.GetEnvironmentVariable("$TESSDATA_PREFIX"), ref tessdataDir))
             return true;
 
-        if (CheckDir(config.TesseractDir, ref tessdataDir))
+        if (CheckTessdataDir(config.TessdataDir, ref tessdataDir))
             return true;
 
-        if (CheckDir(Path.Combine(AppContext.BaseDirectory, "tessdata"), ref tessdataDir))
+        if (CheckTessdataDir(Path.Combine(AppContext.BaseDirectory, "tessdata"), ref tessdataDir))
             return true;
 
         return false;
 
-        static bool CheckDir(string path, ref string dir)
+        static bool CheckTessdataDir(string path, ref string dir)
         {
             var result = !string.IsNullOrEmpty(path) && Directory.Exists(path);
             if (result)

@@ -9,13 +9,15 @@ namespace TgChannelRecognize.Recognition;
 
 public class Recognizer(ILogger logger, RunOptions runOptions, Config config, TgChannelLib.Model.ChannelContext context, FrameExtractor frameExtractor)
 {
-    private const string TESSERACT_FILENAME = "tesseract";
+    private const string DEFAULT_TESSERACT_FILENAME = "tesseract";
     private const string TSV_TYPE = "tsv";
     private const string TSV_EXTENSION = $".{TSV_TYPE}";
     private const float CONFIDENCE_THRESHOLD = 0.75f;
 
     private const int OFFLINE_CHUNK_SIZE = 50;
     private const int NETWORK_CHUNK_SIZE = 1;
+
+    private string TesseractFile => string.IsNullOrEmpty(config.TesseractFile) ? DEFAULT_TESSERACT_FILENAME : config.TesseractFile;
 
     private int _totalRecognizedCount = 0;
 
@@ -116,7 +118,7 @@ public class Recognizer(ILogger logger, RunOptions runOptions, Config config, Tg
 
         var psi = new ProcessStartInfo
         {
-            FileName = TESSERACT_FILENAME,
+            FileName = TesseractFile,
             Arguments = args,
             UseShellExecute = false,
             RedirectStandardOutput = true,
