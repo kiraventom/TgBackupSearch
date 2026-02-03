@@ -1,4 +1,4 @@
-# Telegram channel media OCR
+# TgChannelRecognize
 
 ### Features
 - Runs OCR on the visual media in the channel: photos, videos (paid media are not supported)
