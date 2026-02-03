@@ -1,4 +1,4 @@
-# App for recognizing text from Telegram channels media
+# Telegram channel media OCR
 
 ### Features
 - Runs OCR on the visual media in the channel: photos, videos (paid media are not supported)
@@ -24,7 +24,7 @@
 5. After completing the recognition TgChannelRecognition will close itself.
 
 #### Offline mode (using path to backup created with [TgChannelBackup](https://github.com/kiraventom/TgChannelBackup))
-1. Run the application, providing the path to backup. Example: `dotnet run -- --channel /home/user/media/tg-backup/channel_1006503122`
+1. Run the application, providing the path to backup. Example: `dotnet run -- --channel ~/media/tg-backup/channel_1006503122`
 2. Application will create example `config.json` file if not present. You can configure Tesseract directories and languages via this file.
 3. Recognition will start, starting from either the first avaiable post or first post without recognitions, depending on if the app was run previously.
 4. After completing the recognition TgChannelRecognition will close itself. 
@@ -40,7 +40,7 @@
 - Audio recognition
 
 ### Generated files
-TgChannelRecognize stores its database and logs at `~/.local/share/TgChannelRecognize`.
+TgChannelRecognize stores its database and logs at `~/.local/share/TgChannelRecognize`,  config at `~/.config/TgChannelSearch`.
 
 ### Bugs
 There are some, for sure.
