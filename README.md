@@ -40,7 +40,7 @@
 - Audio recognition
 
 ### Generated files
-TgChannelRecognize stores its database and logs at `~/.local/share/TgChannelRecognize`,  config at `~/.config/TgChannelSearch`.
+TgChannelRecognize stores its database and logs at `~/.local/share/TgChannelRecognize`,  config at `~/.config/TgChannelRecognize`.
 
 ### Bugs
 There are some, for sure.
